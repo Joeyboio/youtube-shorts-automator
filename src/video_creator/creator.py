@@ -148,7 +148,7 @@ class VideoCreator:
                         text=wrapped,
                         font_size=self.settings.font_size,
                         color=self.settings.font_color,
-                        font="DejaVu-Sans-Bold",
+                        font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                         stroke_color="black",
                         stroke_width=3,
                         size=(self.width - 100, None),

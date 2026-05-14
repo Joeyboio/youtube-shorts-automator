@@ -21,6 +21,9 @@ dependencies = [
     "yt-dlp>=2023.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["."]
+
 [project.scripts]
 yt-shorts = "src.main:main"
 
