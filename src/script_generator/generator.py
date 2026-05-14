@@ -198,7 +198,11 @@ class ScriptGenerator:
         logger.info("No Reddit stories available, generating original script")
         if not self.openai_client:
             return self.generate_builtin_script()
-        return self.generate_original_script()
+        try:
+            return self.generate_original_script()
+        except Exception as e:
+            logger.warning("OpenAI script generation failed (%s), using built-in script", e)
+            return self.generate_builtin_script()
 
     def _fallback_script(self, story: dict[str, str]) -> Script:
         """Simple fallback when OpenAI is not available — just truncate the story."""
