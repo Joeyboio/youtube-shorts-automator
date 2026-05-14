@@ -7,13 +7,37 @@ import random
 import textwrap
 from pathlib import Path
 
+from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.video.VideoClip import ColorClip, TextClip
+from moviepy.video.VideoClip import ColorClip
+from PIL import Image, ImageDraw, ImageFont
 
 from src.config import Settings
 from src.script_generator.generator import Script
+
+FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+]
+
+FONT_BOLD_CANDIDATES = [
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+]
+
+
+def _find_font(bold: bool = False) -> str:
+    """Find the best available font."""
+    candidates = FONT_BOLD_CANDIDATES if bold else FONT_CANDIDATES
+    for path in candidates:
+        if Path(path).exists():
+            return path
+    return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +80,10 @@ class VideoCreator:
             [background, subtitle_overlay],
             size=(self.width, self.height),
         )
-        final = final.with_audio(audio_clip.subclipped(0, duration))
+
+        voiceover = audio_clip.subclipped(0, duration)
+        mixed_audio = self._mix_with_background_music(voiceover, duration)
+        final = final.with_audio(mixed_audio)
         final = final.with_duration(duration)
 
         final.write_videofile(
@@ -116,6 +143,36 @@ class VideoCreator:
         )
         return clip
 
+    def _mix_with_background_music(
+        self, voiceover: AudioFileClip, duration: float
+    ) -> CompositeAudioClip:
+        """Mix voiceover with background music at low volume."""
+        music_dir = Path(self.settings.background_videos_dir).parent / "music"
+        music_files = list(music_dir.glob("*.wav")) + list(music_dir.glob("*.mp3"))
+
+        if not music_files:
+            logger.info("No background music found, using voiceover only")
+            return voiceover
+
+        music_file = random.choice(music_files)
+        logger.info("Using background music: %s", music_file.name)
+
+        try:
+            music = AudioFileClip(str(music_file))
+            if music.duration < duration:
+                from moviepy.audio.AudioClip import concatenate_audioclips
+
+                loops = int(duration / music.duration) + 1
+                music = concatenate_audioclips([music] * loops)
+
+            music = music.subclipped(0, duration)
+            music = music.with_volume_scaled(self.settings.background_music_volume)
+
+            return CompositeAudioClip([voiceover, music])
+        except Exception as e:
+            logger.warning("Failed to add background music: %s", e)
+            return voiceover
+
     def _create_gradient_background(self, duration: float) -> ColorClip:
         """Create a simple dark background as fallback."""
         return ColorClip(
@@ -124,43 +181,95 @@ class VideoCreator:
             duration=duration,
         )
 
+    def _render_card_image(self, text: str) -> str:
+        """Render text on a semi-transparent white card (like the example video style)."""
+        import tempfile
+
+        font_path = _find_font(bold=False)
+        font_size = self.settings.font_size
+        font = ImageFont.truetype(font_path, font_size)
+
+        card_width = self.width - 60
+        wrapped = textwrap.fill(text, width=42)
+
+        dummy_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        dummy_draw = ImageDraw.Draw(dummy_img)
+        bbox = dummy_draw.multiline_textbbox((0, 0), wrapped, font=font)
+        text_h = bbox[3] - bbox[1]
+
+        padding_x = 30
+        padding_y = 25
+        card_height = text_h + padding_y * 2
+
+        img = Image.new("RGBA", (card_width, card_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        draw.rounded_rectangle(
+            [(0, 0), (card_width - 1, card_height - 1)],
+            radius=16,
+            fill=(255, 255, 255, 230),
+        )
+
+        draw.multiline_text(
+            (padding_x, padding_y),
+            wrapped,
+            font=font,
+            fill=(30, 30, 30, 255),
+            align="left",
+        )
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        img.save(tmp.name)
+        return tmp.name
+
+    def _split_into_sentences(self, text: str) -> list[str]:
+        """Split text into sentence groups for progressive reveal."""
+        import re
+
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        groups: list[str] = []
+        current = ""
+        for s in sentences:
+            candidate = (current + " " + s).strip() if current else s
+            if len(candidate) > 200 and current:
+                groups.append(current)
+                current = s
+            else:
+                current = candidate
+        if current:
+            groups.append(current)
+        return groups if groups else [text]
+
     def _create_subtitle_overlay(self, text: str, duration: float) -> CompositeVideoClip:
-        """Create animated subtitle overlay that shows text in chunks."""
-        words = text.split()
-        words_per_chunk = 6
-        chunks: list[str] = []
+        """Create progressive text card overlay matching the example video style."""
+        sentences = self._split_into_sentences(text)
+        accumulated = ""
+        cards: list[tuple[str, float, float]] = []
+        chunk_duration = duration / len(sentences)
 
-        for i in range(0, len(words), words_per_chunk):
-            chunk = " ".join(words[i : i + words_per_chunk])
-            chunks.append(chunk)
+        for i, sentence in enumerate(sentences):
+            accumulated = (accumulated + " " + sentence).strip() if accumulated else sentence
+            start = i * chunk_duration
+            dur = chunk_duration
+            cards.append((accumulated, start, dur))
 
-        if not chunks:
-            chunks = [text]
-
-        chunk_duration = duration / len(chunks)
         subtitle_clips = []
+        card_y = int(self.height * 0.18)
 
-        for i, chunk in enumerate(chunks):
-            wrapped = textwrap.fill(chunk, width=20)
+        for accumulated_text, start, dur in cards:
             try:
-                txt_clip = (
-                    TextClip(
-                        text=wrapped,
-                        font_size=self.settings.font_size,
-                        color=self.settings.font_color,
-                        font="DejaVu-Sans-Bold",
-                        stroke_color="black",
-                        stroke_width=3,
-                        size=(self.width - 100, None),
-                        method="caption",
-                    )
-                    .with_position("center")
-                    .with_start(i * chunk_duration)
-                    .with_duration(chunk_duration)
+                img_path = self._render_card_image(accumulated_text)
+                from moviepy import ImageClip
+
+                img_clip = (
+                    ImageClip(img_path)
+                    .with_position(("center", card_y))
+                    .with_start(start)
+                    .with_duration(dur)
                 )
-                subtitle_clips.append(txt_clip)
+                subtitle_clips.append(img_clip)
             except Exception as e:
-                logger.warning("Failed to create subtitle chunk %d: %s", i, e)
+                logger.warning("Failed to create subtitle card: %s", e)
 
         if not subtitle_clips:
             transparent = ColorClip(

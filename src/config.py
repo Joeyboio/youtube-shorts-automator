@@ -49,12 +49,27 @@ class Settings(BaseSettings):
         description="Default tags for uploaded videos",
     )
 
+    # --- TTS settings ---
+    tts_voice: str = Field(
+        default="en-US-AndrewNeural",
+        description="Edge TTS voice (natural storytelling voice)",
+    )
+    tts_rate: str = Field(
+        default="+5%", description="Edge TTS speaking rate (e.g. -5%, +10%)"
+    )
+    tts_pitch: str = Field(
+        default="-2Hz", description="Edge TTS pitch adjustment (e.g. -2Hz, +5Hz)"
+    )
+
     # --- Video settings ---
     video_width: int = Field(default=1080, description="Video width (portrait for Shorts)")
     video_height: int = Field(default=1920, description="Video height (portrait for Shorts)")
-    font_size: int = Field(default=48, description="Subtitle font size")
+    font_size: int = Field(default=36, description="Subtitle font size")
     font_color: str = Field(default="white", description="Subtitle font color")
     max_video_duration: int = Field(default=59, description="Max Shorts duration in seconds")
+    background_music_volume: float = Field(
+        default=0.08, description="Background music volume (0.0 to 1.0)"
+    )
 
     # --- Background videos ---
     background_videos_dir: str = Field(

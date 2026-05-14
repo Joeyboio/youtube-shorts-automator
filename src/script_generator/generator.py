@@ -1,4 +1,4 @@
-"""Generate short video scripts from Reddit stories using OpenAI or PRAW."""
+"""Generate short video scripts from Reddit stories, OpenAI, or built-in templates."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import praw
 from openai import OpenAI
 
 from src.config import Settings
+from src.script_generator.stories import BUILTIN_SCRIPTS
 
 logger = logging.getLogger(__name__)
 
@@ -130,14 +131,23 @@ class ScriptGenerator:
             hashtags=["#reddit", f"#{subreddit}", "#shorts", "#storytime"],
         )
 
+    def generate_builtin_script(self) -> Script:
+        """Pick a random script from the built-in story library (no API needed)."""
+        story = random.choice(BUILTIN_SCRIPTS)
+        logger.info("Using built-in script: %s", story["title"][:60])
+        return Script(
+            title=story["title"],
+            text=story["text"],
+            source="builtin",
+            hashtags=["#reddit", "#aita", "#shorts", "#storytime", "#redditstories"],
+        )
+
     def generate_original_script(self) -> Script:
         """Generate a completely original AITA-style script using AI."""
         client = self.openai_client
         if not client:
-            raise RuntimeError(
-                "OpenAI API key is required for original script generation. "
-                "Set OPENAI_API_KEY in your .env file."
-            )
+            logger.info("No OpenAI key, falling back to built-in scripts")
+            return self.generate_builtin_script()
 
         response = client.chat.completions.create(
             model=self.settings.openai_model,
@@ -186,7 +196,13 @@ class ScriptGenerator:
             return self.generate_script_from_story(story)
 
         logger.info("No Reddit stories available, generating original script")
-        return self.generate_original_script()
+        if not self.openai_client:
+            return self.generate_builtin_script()
+        try:
+            return self.generate_original_script()
+        except Exception as e:
+            logger.warning("OpenAI script generation failed (%s), using built-in script", e)
+            return self.generate_builtin_script()
 
     def _fallback_script(self, story: dict[str, str]) -> Script:
         """Simple fallback when OpenAI is not available — just truncate the story."""
