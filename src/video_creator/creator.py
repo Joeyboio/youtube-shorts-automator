@@ -7,6 +7,7 @@ import random
 import textwrap
 from pathlib import Path
 
+from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -71,7 +72,10 @@ class VideoCreator:
             [background, subtitle_overlay],
             size=(self.width, self.height),
         )
-        final = final.with_audio(audio_clip.subclipped(0, duration))
+
+        voiceover = audio_clip.subclipped(0, duration)
+        mixed_audio = self._mix_with_background_music(voiceover, duration)
+        final = final.with_audio(mixed_audio)
         final = final.with_duration(duration)
 
         final.write_videofile(
@@ -130,6 +134,36 @@ class VideoCreator:
             height=self.height,
         )
         return clip
+
+    def _mix_with_background_music(
+        self, voiceover: AudioFileClip, duration: float
+    ) -> CompositeAudioClip:
+        """Mix voiceover with background music at low volume."""
+        music_dir = Path(self.settings.background_videos_dir).parent / "music"
+        music_files = list(music_dir.glob("*.wav")) + list(music_dir.glob("*.mp3"))
+
+        if not music_files:
+            logger.info("No background music found, using voiceover only")
+            return voiceover
+
+        music_file = random.choice(music_files)
+        logger.info("Using background music: %s", music_file.name)
+
+        try:
+            music = AudioFileClip(str(music_file))
+            if music.duration < duration:
+                from moviepy.audio.AudioClip import concatenate_audioclips
+
+                loops = int(duration / music.duration) + 1
+                music = concatenate_audioclips([music] * loops)
+
+            music = music.subclipped(0, duration)
+            music = music.with_volume_scaled(self.settings.background_music_volume)
+
+            return CompositeAudioClip([voiceover, music])
+        except Exception as e:
+            logger.warning("Failed to add background music: %s", e)
+            return voiceover
 
     def _create_gradient_background(self, duration: float) -> ColorClip:
         """Create a simple dark background as fallback."""

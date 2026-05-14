@@ -10,7 +10,6 @@ Usage:
 After downloading, place the .mp4 files in assets/backgrounds/
 """
 
-import sys
 from pathlib import Path
 
 BACKGROUNDS_DIR = Path(__file__).resolve().parent.parent / "assets" / "backgrounds"

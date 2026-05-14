@@ -16,7 +16,6 @@ Usage:
 from __future__ import annotations
 
 import math
-import sys
 from pathlib import Path
 
 import numpy as np

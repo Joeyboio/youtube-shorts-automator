@@ -1,17 +1,22 @@
-"""Text-to-speech voiceover generation using gTTS."""
+"""Text-to-speech voiceover generation using edge-tts (natural) or gTTS (fallback)."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
-
-from gtts import gTTS
 
 from src.config import Settings
 from src.script_generator.generator import Script
 
 logger = logging.getLogger(__name__)
+
+VOICE_OPTIONS = [
+    "en-US-GuyNeural",
+    "en-US-ChristopherNeural",
+    "en-US-AndrewNeural",
+]
 
 
 class VoiceoverGenerator:
@@ -19,7 +24,9 @@ class VoiceoverGenerator:
         self.settings = settings
 
     def generate(self, script: Script, output_path: str | Path) -> Path:
-        """Generate an MP3 voiceover from a script using gTTS.
+        """Generate an MP3 voiceover from a script.
+
+        Uses edge-tts for natural-sounding speech, falls back to gTTS.
 
         Args:
             script: The script to convert to speech.
@@ -38,11 +45,34 @@ class VoiceoverGenerator:
 
         logger.info("Generating voiceover (%d chars) -> %s", len(text), output_path)
 
-        tts = gTTS(text=text, lang="en", slow=False)
-        tts.save(str(output_path))
+        try:
+            self._generate_edge_tts(text, output_path)
+        except Exception as e:
+            logger.warning("edge-tts failed (%s), falling back to gTTS", e)
+            self._generate_gtts(text, output_path)
 
         logger.info("Voiceover saved: %s", output_path)
         return output_path
+
+    def _generate_edge_tts(self, text: str, output_path: Path) -> None:
+        """Generate voiceover using Microsoft Edge TTS (free, natural-sounding)."""
+        import edge_tts
+
+        voice = self.settings.tts_voice
+        rate = self.settings.tts_rate
+
+        async def _run() -> None:
+            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            await communicate.save(str(output_path))
+
+        asyncio.run(_run())
+
+    def _generate_gtts(self, text: str, output_path: Path) -> None:
+        """Generate voiceover using gTTS (fallback)."""
+        from gtts import gTTS
+
+        tts = gTTS(text=text, lang="en", slow=False)
+        tts.save(str(output_path))
 
     def _clean_text(self, text: str) -> str:
         """Clean script text for TTS — remove hashtags, markdown, etc."""
@@ -54,6 +84,6 @@ class VoiceoverGenerator:
         return text
 
     def estimate_duration(self, script: Script) -> float:
-        """Estimate audio duration in seconds (rough: ~2.5 words/sec for gTTS)."""
+        """Estimate audio duration in seconds (rough: ~2.5 words/sec)."""
         word_count = len(script.text.split())
         return word_count / 2.5
