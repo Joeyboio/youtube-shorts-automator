@@ -12,12 +12,6 @@ from src.script_generator.generator import Script
 
 logger = logging.getLogger(__name__)
 
-VOICE_OPTIONS = [
-    "en-US-GuyNeural",
-    "en-US-ChristopherNeural",
-    "en-US-AndrewNeural",
-]
-
 
 class VoiceoverGenerator:
     def __init__(self, settings: Settings) -> None:
@@ -60,9 +54,10 @@ class VoiceoverGenerator:
 
         voice = self.settings.tts_voice
         rate = self.settings.tts_rate
+        pitch = self.settings.tts_pitch
 
         async def _run() -> None:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
             await communicate.save(str(output_path))
 
         asyncio.run(_run())

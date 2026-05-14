@@ -1,7 +1,7 @@
-"""Generate royalty-free lo-fi background music tracks using synthesis.
+"""Generate royalty-free background music tracks using synthesis.
 
-Creates soothing, playful ambient music suitable for YouTube Shorts backgrounds.
-No external dependencies beyond numpy and standard audio encoding.
+Creates soothing, warm background music suitable for YouTube Shorts AITA videos.
+Inspired by "Lè Bossa" style — gentle bossa nova with soft plucked notes.
 """
 
 from __future__ import annotations
@@ -15,27 +15,39 @@ SAMPLE_RATE = 44100
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "music"
 
 
-def sine_wave(freq: float, duration: float, volume: float = 0.3) -> np.ndarray:
-    """Generate a sine wave."""
-    t = np.linspace(0, duration, int(SAMPLE_RATE * duration), endpoint=False)
-    return (volume * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+def pluck_note(freq: float, duration: float, volume: float = 0.3) -> np.ndarray:
+    """Simulate a plucked string sound (guitar-like) using Karplus-Strong-inspired synthesis."""
+    n_samples = int(SAMPLE_RATE * duration)
+    t = np.linspace(0, duration, n_samples, endpoint=False)
+
+    # Fundamental + harmonics with quick decay for plucked sound
+    decay = np.exp(-t * 4.0)
+    tone = np.sin(2 * np.pi * freq * t) * 0.6
+    tone += np.sin(2 * np.pi * freq * 2 * t) * 0.2 * np.exp(-t * 6.0)
+    tone += np.sin(2 * np.pi * freq * 3 * t) * 0.1 * np.exp(-t * 8.0)
+    tone += np.sin(2 * np.pi * freq * 4 * t) * 0.05 * np.exp(-t * 10.0)
+
+    return (tone * decay * volume).astype(np.float32)
 
 
-def apply_envelope(
-    audio: np.ndarray, attack: float = 0.05, release: float = 0.1
-) -> np.ndarray:
-    """Apply attack/release envelope to smooth note transitions."""
-    n = len(audio)
-    attack_samples = int(attack * SAMPLE_RATE)
-    release_samples = int(release * SAMPLE_RATE)
-    envelope = np.ones(n, dtype=np.float32)
-
-    if attack_samples > 0:
-        envelope[:attack_samples] = np.linspace(0, 1, attack_samples)
-    if release_samples > 0:
-        envelope[-release_samples:] = np.linspace(1, 0, release_samples)
-
-    return audio * envelope
+def soft_pad(freq: float, duration: float, volume: float = 0.05) -> np.ndarray:
+    """Gentle sustained pad tone."""
+    n_samples = int(SAMPLE_RATE * duration)
+    t = np.linspace(0, duration, n_samples, endpoint=False)
+    # Soft sine with slow vibrato
+    vibrato = 1.0 + 0.003 * np.sin(2 * np.pi * 4.5 * t)
+    tone = np.sin(2 * np.pi * freq * vibrato * t) * volume
+    # Detuned copy for warmth
+    tone += np.sin(2 * np.pi * freq * 1.002 * t) * volume * 0.6
+    # Gentle attack/release
+    env = np.ones(n_samples, dtype=np.float32)
+    attack = int(0.1 * SAMPLE_RATE)
+    release = int(0.2 * SAMPLE_RATE)
+    if attack > 0:
+        env[:attack] = np.linspace(0, 1, attack)
+    if release > 0:
+        env[-release:] = np.linspace(1, 0, release)
+    return (tone * env).astype(np.float32)
 
 
 def save_wav(audio: np.ndarray, path: Path) -> None:
@@ -48,85 +60,147 @@ def save_wav(audio: np.ndarray, path: Path) -> None:
         wf.writeframes(audio_int16.tobytes())
 
 
-def generate_lofi_chill(duration: float = 70.0) -> np.ndarray:
-    """Generate a soothing lo-fi chill beat with gentle piano-like tones."""
+def generate_bossa_nova(duration: float = 70.0) -> np.ndarray:
+    """Generate a warm bossa nova style track with plucked guitar-like notes.
+
+    Inspired by "Lè Bossa" — gentle, soothing, perfect for storytelling videos.
+    """
     total_samples = int(SAMPLE_RATE * duration)
     output = np.zeros(total_samples, dtype=np.float32)
 
-    # Chord progression: Cmaj7 -> Am7 -> Fmaj7 -> G7 (classic lo-fi)
-    chords = [
-        [261.63, 329.63, 392.00, 493.88],  # Cmaj7
-        [220.00, 261.63, 329.63, 392.00],  # Am7
-        [174.61, 220.00, 261.63, 329.63],  # Fmaj7
-        [196.00, 246.94, 293.66, 349.23],  # G7
+    # Bossa nova chord progression (Cmaj7 - Dm7 - G7 - Cmaj7)
+    # Using note frequencies
+    chord_patterns = [
+        # Cmaj7 - gentle arpeggio pattern
+        [261.63, 329.63, 392.00, 493.88, 392.00, 329.63],
+        # Dm7
+        [293.66, 349.23, 440.00, 523.25, 440.00, 349.23],
+        # Em7
+        [329.63, 392.00, 493.88, 587.33, 493.88, 392.00],
+        # Am7
+        [220.00, 261.63, 329.63, 392.00, 329.63, 261.63],
+        # Fmaj7
+        [174.61, 220.00, 261.63, 329.63, 261.63, 220.00],
+        # G7
+        [196.00, 246.94, 293.66, 349.23, 293.66, 246.94],
     ]
 
-    note_duration = 0.8
-    chord_duration = 4.0
+    # Bossa nova rhythm: syncopated pattern (beats in 8th notes)
+    # Classic bossa pattern: x . x . . x . x (where x = pluck)
+    beat_pattern = [True, False, True, False, False, True, False, True]
+    eighth_note_dur = 0.25  # At ~120 BPM
+    note_dur = 0.4
 
-    for chord_idx in range(int(duration / chord_duration)):
-        chord = chords[chord_idx % len(chords)]
-        chord_start = int(chord_idx * chord_duration * SAMPLE_RATE)
+    beat_time = 0.0
+    chord_idx = 0
+    note_in_chord = 0
+    beat_in_pattern = 0
 
-        for note_idx in range(int(chord_duration / note_duration)):
-            note_start = chord_start + int(note_idx * note_duration * SAMPLE_RATE)
-            freq = chord[note_idx % len(chord)]
+    while beat_time < duration:
+        if beat_pattern[beat_in_pattern % len(beat_pattern)]:
+            chord = chord_patterns[chord_idx % len(chord_patterns)]
+            freq = chord[note_in_chord % len(chord)]
 
-            # Main tone
-            note = sine_wave(freq, note_duration * 0.9, volume=0.15)
-            # Add soft harmonic
-            note += sine_wave(freq * 2, note_duration * 0.9, volume=0.04)
-            # Add sub tone
-            note += sine_wave(freq * 0.5, note_duration * 0.9, volume=0.06)
-            note = apply_envelope(note, attack=0.02, release=0.15)
+            note = pluck_note(freq, note_dur, volume=0.2)
+            start_sample = int(beat_time * SAMPLE_RATE)
+            end_sample = min(start_sample + len(note), total_samples)
+            if start_sample < total_samples:
+                length = end_sample - start_sample
+                output[start_sample:end_sample] += note[:length]
 
-            end = min(note_start + len(note), total_samples)
-            if note_start < total_samples:
-                length = end - note_start
-                output[note_start:end] += note[:length]
+            note_in_chord += 1
 
-    # Add a gentle pad/drone underneath
-    pad = sine_wave(130.81, duration, volume=0.04)  # Low C
-    pad += sine_wave(196.00, duration, volume=0.03)  # G
-    pad_envelope = np.ones(total_samples, dtype=np.float32) * 0.8
-    output += pad[:total_samples] * pad_envelope
+        beat_in_pattern += 1
+        beat_time += eighth_note_dur
 
-    # Normalize
-    peak = np.max(np.abs(output))
-    if peak > 0:
-        output = output / peak * 0.7
+        # Change chord every 2 bars (16 eighth notes)
+        if beat_in_pattern % 16 == 0:
+            chord_idx += 1
+            note_in_chord = 0
 
-    return output
+    # Add warm bass notes (root of each chord, sustained)
+    bass_roots = [130.81, 146.83, 164.81, 110.00, 87.31, 98.00]
+    chord_dur = 16 * eighth_note_dur  # 2 bars per chord
+    for i in range(int(duration / chord_dur)):
+        root = bass_roots[i % len(bass_roots)]
+        bass = soft_pad(root, chord_dur, volume=0.04)
+        start = int(i * chord_dur * SAMPLE_RATE)
+        end = min(start + len(bass), total_samples)
+        if start < total_samples:
+            output[start:end] += bass[: end - start]
 
-
-def generate_ambient_dreamy(duration: float = 70.0) -> np.ndarray:
-    """Generate dreamy ambient pads — ethereal and relaxing."""
-    total_samples = int(SAMPLE_RATE * duration)
-    output = np.zeros(total_samples, dtype=np.float32)
-
-    # Slow evolving pads
-    freqs = [130.81, 164.81, 196.00, 246.94, 293.66]
-    for i, freq in enumerate(freqs):
+    # Add gentle high pad for airiness
+    pad_freqs = [523.25, 659.25]
+    for freq in pad_freqs:
         t = np.linspace(0, duration, total_samples, endpoint=False)
-        # Slowly modulate volume
-        mod = 0.5 + 0.5 * np.sin(2 * np.pi * (0.05 + i * 0.02) * t)
-        tone = np.sin(2 * np.pi * freq * t) * 0.08 * mod
-        # Add detuned copy for warmth
-        tone += np.sin(2 * np.pi * (freq * 1.003) * t) * 0.05 * mod
-        output += tone.astype(np.float32)
-
-    # Add gentle high sparkles
-    sparkle_freqs = [523.25, 659.25, 783.99]
-    for freq in sparkle_freqs:
-        t = np.linspace(0, duration, total_samples, endpoint=False)
-        mod = 0.5 + 0.5 * np.sin(2 * np.pi * 0.08 * t)
-        sparkle = np.sin(2 * np.pi * freq * t) * 0.02 * mod
+        mod = 0.5 + 0.5 * np.sin(2 * np.pi * 0.04 * t)
+        sparkle = np.sin(2 * np.pi * freq * t) * 0.012 * mod
         output += sparkle.astype(np.float32)
 
     # Normalize
     peak = np.max(np.abs(output))
     if peak > 0:
-        output = output / peak * 0.6
+        output = output / peak * 0.65
+
+    return output
+
+
+def generate_warm_ambient(duration: float = 70.0) -> np.ndarray:
+    """Generate warm ambient pads — cozy and emotional."""
+    total_samples = int(SAMPLE_RATE * duration)
+    output = np.zeros(total_samples, dtype=np.float32)
+
+    # Warm chord tones with slow movement
+    pad_chords = [
+        [130.81, 164.81, 196.00, 261.63],  # C
+        [110.00, 130.81, 164.81, 220.00],  # Am
+        [87.31, 110.00, 130.81, 174.61],   # F
+        [98.00, 123.47, 146.83, 196.00],   # G
+    ]
+
+    chord_duration = 8.0
+    for chord_idx in range(int(duration / chord_duration)):
+        chord = pad_chords[chord_idx % len(pad_chords)]
+        chord_start = int(chord_idx * chord_duration * SAMPLE_RATE)
+
+        for freq in chord:
+            t = np.linspace(0, chord_duration, int(chord_duration * SAMPLE_RATE), endpoint=False)
+            # Slow warm tone with gentle vibrato
+            vibrato = 1.0 + 0.002 * np.sin(2 * np.pi * 3.5 * t)
+            tone = np.sin(2 * np.pi * freq * vibrato * t) * 0.06
+            # Detuned for warmth
+            tone += np.sin(2 * np.pi * freq * 1.003 * t) * 0.03
+            # Envelope
+            env = np.ones(len(t), dtype=np.float32)
+            fade = int(1.0 * SAMPLE_RATE)
+            env[:fade] = np.linspace(0, 1, fade)
+            env[-fade:] = np.linspace(1, 0, fade)
+            tone = (tone * env).astype(np.float32)
+
+            end = min(chord_start + len(tone), total_samples)
+            if chord_start < total_samples:
+                length = end - chord_start
+                output[chord_start:end] += tone[:length]
+
+    # Add gentle plucked arpeggios on top
+    arp_notes = [523.25, 440.00, 392.00, 329.63, 261.63, 329.63, 392.00, 440.00]
+    arp_spacing = 0.6
+    arp_time = 0.0
+    arp_idx = 0
+    while arp_time < duration:
+        freq = arp_notes[arp_idx % len(arp_notes)]
+        note = pluck_note(freq, 0.5, volume=0.08)
+        start = int(arp_time * SAMPLE_RATE)
+        end = min(start + len(note), total_samples)
+        if start < total_samples:
+            output[start:end] += note[: end - start]
+        arp_time += arp_spacing
+        arp_idx += 1
+
+    # Normalize
+    peak = np.max(np.abs(output))
+    if peak > 0:
+        output = output / peak * 0.55
 
     return output
 
@@ -134,15 +208,15 @@ def generate_ambient_dreamy(duration: float = 70.0) -> np.ndarray:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("Generating lo-fi chill track...")
-    lofi = generate_lofi_chill(70.0)
-    lofi_path = OUTPUT_DIR / "lofi_chill.wav"
-    save_wav(lofi, lofi_path)
-    print(f"  Saved: {lofi_path} ({lofi_path.stat().st_size / 1024:.0f} KB)")
+    print("Generating bossa nova track (Lè Bossa style)...")
+    bossa = generate_bossa_nova(70.0)
+    bossa_path = OUTPUT_DIR / "bossa_nova.wav"
+    save_wav(bossa, bossa_path)
+    print(f"  Saved: {bossa_path} ({bossa_path.stat().st_size / 1024:.0f} KB)")
 
-    print("Generating ambient dreamy track...")
-    ambient = generate_ambient_dreamy(70.0)
-    ambient_path = OUTPUT_DIR / "ambient_dreamy.wav"
+    print("Generating warm ambient track...")
+    ambient = generate_warm_ambient(70.0)
+    ambient_path = OUTPUT_DIR / "warm_ambient.wav"
     save_wav(ambient, ambient_path)
     print(f"  Saved: {ambient_path} ({ambient_path.stat().st_size / 1024:.0f} KB)")
 
