@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # --- Video settings ---
     video_width: int = Field(default=1080, description="Video width (portrait for Shorts)")
     video_height: int = Field(default=1920, description="Video height (portrait for Shorts)")
-    font_size: int = Field(default=72, description="Subtitle font size")
+    font_size: int = Field(default=36, description="Subtitle font size")
     font_color: str = Field(default="white", description="Subtitle font color")
     max_video_duration: int = Field(default=59, description="Max Shorts duration in seconds")
     background_music_volume: float = Field(

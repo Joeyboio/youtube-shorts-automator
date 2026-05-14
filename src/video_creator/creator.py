@@ -18,18 +18,26 @@ from src.config import Settings
 from src.script_generator.generator import Script
 
 FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/custom/Impact.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+]
+
+FONT_BOLD_CANDIDATES = [
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
 ]
 
 
-def _find_font() -> str:
-    """Find the best available bold font."""
-    for path in FONT_CANDIDATES:
+def _find_font(bold: bool = False) -> str:
+    """Find the best available font."""
+    candidates = FONT_BOLD_CANDIDATES if bold else FONT_CANDIDATES
+    for path in candidates:
         if Path(path).exists():
             return path
-    return "DejaVu-Sans-Bold"
+    return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
 
 logger = logging.getLogger(__name__)
 
@@ -173,86 +181,95 @@ class VideoCreator:
             duration=duration,
         )
 
-    def _render_text_image(self, text: str, font_path: str) -> str:
-        """Render text to a transparent PNG with outline + shadow for maximum readability."""
+    def _render_card_image(self, text: str) -> str:
+        """Render text on a semi-transparent white card (like the example video style)."""
+        import tempfile
+
+        font_path = _find_font(bold=False)
         font_size = self.settings.font_size
         font = ImageFont.truetype(font_path, font_size)
-        wrapped = textwrap.fill(text.upper(), width=16)
-        padding = 40
-        outline_width = 6
+
+        card_width = self.width - 60
+        wrapped = textwrap.fill(text, width=42)
 
         dummy_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         dummy_draw = ImageDraw.Draw(dummy_img)
         bbox = dummy_draw.multiline_textbbox((0, 0), wrapped, font=font)
-        text_w = bbox[2] - bbox[0] + padding * 2 + outline_width * 2
-        text_h = bbox[3] - bbox[1] + padding * 2 + outline_width * 2
+        text_h = bbox[3] - bbox[1]
 
-        img = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
+        padding_x = 30
+        padding_y = 25
+        card_height = text_h + padding_y * 2
+
+        img = Image.new("RGBA", (card_width, card_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        x = padding + outline_width
-        y = padding + outline_width
 
-        shadow_offset = 4
+        draw.rounded_rectangle(
+            [(0, 0), (card_width - 1, card_height - 1)],
+            radius=16,
+            fill=(255, 255, 255, 230),
+        )
+
         draw.multiline_text(
-            (x + shadow_offset, y + shadow_offset),
+            (padding_x, padding_y),
             wrapped,
             font=font,
-            fill=(0, 0, 0, 160),
-            align="center",
+            fill=(30, 30, 30, 255),
+            align="left",
         )
-
-        for dx in range(-outline_width, outline_width + 1):
-            for dy in range(-outline_width, outline_width + 1):
-                if dx * dx + dy * dy <= outline_width * outline_width:
-                    draw.multiline_text(
-                        (x + dx, y + dy),
-                        wrapped,
-                        font=font,
-                        fill=(0, 0, 0, 255),
-                        align="center",
-                    )
-
-        draw.multiline_text(
-            (x, y), wrapped, font=font, fill="white", align="center"
-        )
-
-        import tempfile
 
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         img.save(tmp.name)
         return tmp.name
 
+    def _split_into_sentences(self, text: str) -> list[str]:
+        """Split text into sentence groups for progressive reveal."""
+        import re
+
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        groups: list[str] = []
+        current = ""
+        for s in sentences:
+            candidate = (current + " " + s).strip() if current else s
+            if len(candidate) > 200 and current:
+                groups.append(current)
+                current = s
+            else:
+                current = candidate
+        if current:
+            groups.append(current)
+        return groups if groups else [text]
+
     def _create_subtitle_overlay(self, text: str, duration: float) -> CompositeVideoClip:
-        """Create animated subtitle overlay with bold, eye-catching text."""
-        font_path = _find_font()
-        words = text.split()
-        words_per_chunk = 4
-        chunks: list[str] = []
+        """Create progressive text card overlay matching the example video style."""
+        sentences = self._split_into_sentences(text)
+        accumulated = ""
+        cards: list[tuple[str, float, float]] = []
+        chunk_duration = duration / len(sentences)
 
-        for i in range(0, len(words), words_per_chunk):
-            chunk = " ".join(words[i : i + words_per_chunk])
-            chunks.append(chunk)
+        for i, sentence in enumerate(sentences):
+            accumulated = (accumulated + " " + sentence).strip() if accumulated else sentence
+            start = i * chunk_duration
+            dur = chunk_duration
+            cards.append((accumulated, start, dur))
 
-        if not chunks:
-            chunks = [text]
-
-        chunk_duration = duration / len(chunks)
         subtitle_clips = []
+        card_y = int(self.height * 0.18)
 
-        for i, chunk in enumerate(chunks):
+        for accumulated_text, start, dur in cards:
             try:
-                img_path = self._render_text_image(chunk, font_path)
+                img_path = self._render_card_image(accumulated_text)
                 from moviepy import ImageClip
 
                 img_clip = (
                     ImageClip(img_path)
-                    .with_position("center")
-                    .with_start(i * chunk_duration)
-                    .with_duration(chunk_duration)
+                    .with_position(("center", card_y))
+                    .with_start(start)
+                    .with_duration(dur)
                 )
                 subtitle_clips.append(img_clip)
             except Exception as e:
-                logger.warning("Failed to create subtitle chunk %d: %s", i, e)
+                logger.warning("Failed to create subtitle card: %s", e)
 
         if not subtitle_clips:
             transparent = ColorClip(
