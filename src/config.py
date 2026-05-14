@@ -55,7 +55,7 @@ class Settings(BaseSettings):
         description="Edge TTS voice (e.g. en-US-GuyNeural, en-US-ChristopherNeural)",
     )
     tts_rate: str = Field(
-        default="-5%", description="Edge TTS speaking rate (e.g. -5%, +10%)"
+        default="+10%", description="Edge TTS speaking rate (e.g. -5%, +10%)"
     )
 
     # --- Video settings ---
