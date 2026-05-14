@@ -10,10 +10,25 @@ from pathlib import Path
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.video.VideoClip import ColorClip, TextClip
+from moviepy.video.VideoClip import ColorClip
+from PIL import Image, ImageDraw, ImageFont
 
 from src.config import Settings
 from src.script_generator.generator import Script
+
+FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/custom/Impact.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+
+
+def _find_font() -> str:
+    """Find the best available bold font."""
+    for path in FONT_CANDIDATES:
+        if Path(path).exists():
+            return path
+    return "DejaVu-Sans-Bold"
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +139,60 @@ class VideoCreator:
             duration=duration,
         )
 
+    def _render_text_image(self, text: str, font_path: str) -> str:
+        """Render text to a transparent PNG with outline + shadow for maximum readability."""
+        font_size = self.settings.font_size
+        font = ImageFont.truetype(font_path, font_size)
+        wrapped = textwrap.fill(text.upper(), width=16)
+        padding = 40
+        outline_width = 6
+
+        dummy_img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        dummy_draw = ImageDraw.Draw(dummy_img)
+        bbox = dummy_draw.multiline_textbbox((0, 0), wrapped, font=font)
+        text_w = bbox[2] - bbox[0] + padding * 2 + outline_width * 2
+        text_h = bbox[3] - bbox[1] + padding * 2 + outline_width * 2
+
+        img = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        x = padding + outline_width
+        y = padding + outline_width
+
+        shadow_offset = 4
+        draw.multiline_text(
+            (x + shadow_offset, y + shadow_offset),
+            wrapped,
+            font=font,
+            fill=(0, 0, 0, 160),
+            align="center",
+        )
+
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
+                if dx * dx + dy * dy <= outline_width * outline_width:
+                    draw.multiline_text(
+                        (x + dx, y + dy),
+                        wrapped,
+                        font=font,
+                        fill=(0, 0, 0, 255),
+                        align="center",
+                    )
+
+        draw.multiline_text(
+            (x, y), wrapped, font=font, fill="white", align="center"
+        )
+
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        img.save(tmp.name)
+        return tmp.name
+
     def _create_subtitle_overlay(self, text: str, duration: float) -> CompositeVideoClip:
-        """Create animated subtitle overlay that shows text in chunks."""
+        """Create animated subtitle overlay with bold, eye-catching text."""
+        font_path = _find_font()
         words = text.split()
-        words_per_chunk = 6
+        words_per_chunk = 4
         chunks: list[str] = []
 
         for i in range(0, len(words), words_per_chunk):
@@ -141,24 +206,17 @@ class VideoCreator:
         subtitle_clips = []
 
         for i, chunk in enumerate(chunks):
-            wrapped = textwrap.fill(chunk, width=20)
             try:
-                txt_clip = (
-                    TextClip(
-                        text=wrapped,
-                        font_size=self.settings.font_size,
-                        color=self.settings.font_color,
-                        font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                        stroke_color="black",
-                        stroke_width=3,
-                        size=(self.width - 100, None),
-                        method="caption",
-                    )
+                img_path = self._render_text_image(chunk, font_path)
+                from moviepy import ImageClip
+
+                img_clip = (
+                    ImageClip(img_path)
                     .with_position("center")
                     .with_start(i * chunk_duration)
                     .with_duration(chunk_duration)
                 )
-                subtitle_clips.append(txt_clip)
+                subtitle_clips.append(img_clip)
             except Exception as e:
                 logger.warning("Failed to create subtitle chunk %d: %s", i, e)
 
